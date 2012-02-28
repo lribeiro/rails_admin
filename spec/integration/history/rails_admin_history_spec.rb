@@ -18,7 +18,7 @@ describe "RailsAdmin History" do
       histories.total_count.should == 30
       histories.count.should == 20
     end
-    
+
     it "should respect RailsAdmin::Config.default_items_per_page" do
       RailsAdmin.config.default_items_per_page = 15
       histories = RailsAdmin::History.history_for_model @model, nil, false, false, false, nil
@@ -45,13 +45,13 @@ describe "RailsAdmin History" do
 
       context "with a lot of histories" do
         before :each do
-          player = @model.create(:team_id => -1, :number => -1, :name => "Player 1")
+          player = Player.create(:team_id => -1, :number => -1, :name => "Player 1")
           101.times do |i|
             player.number = i
             RailsAdmin::History.create_history_item "change #{i}", player, @model, nil
           end
         end
-        
+
         it 'should get latest ones' do
           RailsAdmin::History.latest.count.should == 100
         end

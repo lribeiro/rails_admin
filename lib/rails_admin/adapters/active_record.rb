@@ -1,34 +1,26 @@
 require 'active_record'
-require 'rails_admin/config/sections/list'
-require 'rails_admin/abstract_object'
+require 'rails_admin/adapters/active_record/abstract_object'
 
 module RailsAdmin
   module Adapters
     module ActiveRecord
       DISABLED_COLUMN_TYPES = [:tsvector, :blob, :binary, :spatial]
-      @@polymorphic_parents = nil
+      LIKE_OPERATOR =  ::ActiveRecord::Base.configurations[Rails.env]['adapter'] == "postgresql" ? 'ILIKE' : 'LIKE'
 
-      def self.polymorphic_parents(name)
-        @@polymorphic_parents ||= {}.tap do |hash|
-          RailsAdmin::AbstractModel.all_models.each do |klass|
-            klass.reflect_on_all_associations.select{|r| r.options[:as] }.each do |reflection|
-              (hash[reflection.options[:as].to_sym] ||= []) << klass
-            end
-          end
-        end
-        @@polymorphic_parents[name.to_sym]
+      def new(params = {})
+        AbstractObject.new(model.new(params))
       end
 
       def get(id)
         if object = model.where(model.primary_key => id).first
-          RailsAdmin::AbstractObject.new object
+          AbstractObject.new object
         else
           nil
         end
       end
 
-      def count(options = {}, scope = nil)
-        all(options.merge({:limit => false, :page => false}), scope).count
+      def scoped
+        model.scoped
       end
 
       def first(options = {}, scope = nil)
@@ -40,56 +32,19 @@ module RailsAdmin
         scope = scope.includes(options[:include]) if options[:include]
         scope = scope.limit(options[:limit]) if options[:limit]
         scope = scope.where(model.primary_key => options[:bulk_ids]) if options[:bulk_ids]
-        scope = scope.where(options[:conditions]) if options[:conditions]
+        scope = scope.where(query_conditions(options[:query])) if options[:query]
+        scope = scope.where(filter_conditions(options[:filters])) if options[:filters]
         scope = scope.page(options[:page]).per(options[:per]) if options[:page] && options[:per]
         scope = scope.reorder("#{options[:sort]} #{options[:sort_reverse] ? 'asc' : 'desc'}") if options[:sort]
         scope
       end
 
-      def scoped
-        model.scoped
-      end
-
-      def create(params = {})
-        model.create(params)
-      end
-
-      def new(params = {})
-        RailsAdmin::AbstractObject.new(model.new(params))
+      def count(options = {}, scope = nil)
+        all(options.merge({:limit => false, :page => false}), scope).count
       end
 
       def destroy(objects)
-        [objects].flatten.map &:destroy
-      end
-
-      def destroy_all!
-        model.all.each do |object|
-          object.destroy
-        end
-      end
-
-      def has_and_belongs_to_many_associations
-        associations.select do |association|
-          association[:type] == :has_and_belongs_to_many
-        end
-      end
-
-      def has_many_associations
-        associations.select do |association|
-          association[:type] == :has_many
-        end
-      end
-
-      def has_one_associations
-        associations.select do |association|
-          association[:type] == :has_one
-        end
-      end
-
-      def belongs_to_associations
-        associations.select do |association|
-          association[:type] == :belongs_to
-        end
+        Array.wrap(objects).each &:destroy
       end
 
       def associations
@@ -112,12 +67,6 @@ module RailsAdmin
         end
       end
 
-      def polymorphic_associations
-        (has_many_associations + has_one_associations).select do |association|
-          association[:options][:as]
-        end
-      end
-
       def properties
         columns = model.columns.reject {|c| c.type.blank? || DISABLED_COLUMN_TYPES.include?(c.type.to_sym) }
         columns.map do |property|
@@ -132,68 +81,47 @@ module RailsAdmin
         end
       end
 
-      def model_store_exists?
-        model.table_exists?
+      private
+
+      def query_conditions(query, fields = config.list.fields.select(&:queryable?))
+        statements = []
+        values = []
+
+        fields.each do |field|
+          field.searchable_columns.flatten.each do |column_infos|
+            statement, value1, value2 = build_statement(column_infos[:column], column_infos[:type], query, field.search_operator)
+            statements << statement if statement
+            values << value1 unless value1.nil?
+            values << value2 unless value2.nil?
+          end
+        end
+
+        [statements.join(' OR '), *values]
       end
 
-      def get_conditions_hash(model_config, query, filters)
-        @like_operator =  "ILIKE" if ::ActiveRecord::Base.configurations[Rails.env]['adapter'] == "postgresql"
-        @like_operator ||= "LIKE"
-
-        query_statements = []
-        filters_statements = []
+      # filters example => {"string_field"=>{"0055"=>{"o"=>"like", "v"=>"test_value"}}, ...}
+      # "0055" is the filter index, no use here. o is the operator, v the value
+      def filter_conditions(filters, fields = config.list.fields.select(&:filterable?))
+        statements = []
         values = []
-        conditions = [""]
 
-        if query.present?
-          queryable_fields = model_config.list.fields.select(&:queryable?)
-          queryable_fields.each do |field|
-            searchable_columns = field.searchable_columns.flatten
-            searchable_columns.each do |field_infos|
-              statement, value1, value2 = build_statement(field_infos[:column], field_infos[:type], query, field.search_operator)
-              if statement
-                query_statements << statement
-                values << value1 unless value1.nil?
-                values << value2 unless value2.nil?
-              end
+        filters.each_pair do |field_name, filters_dump|
+          filters_dump.each do |filter_index, filter_dump|
+            field_statements = []
+            fields.find{|f| f.name.to_s == field_name}.searchable_columns.each do |column_infos|
+              statement, value1, value2 = build_statement(column_infos[:column], column_infos[:type], filter_dump[:v], (filter_dump[:o] || 'default'))
+              field_statements << statement if statement.present?
+              values << value1 unless value1.nil?
+              values << value2 unless value2.nil?
             end
+            statements << "(#{field_statements.join(' OR ')})" unless field_statements.empty?
           end
         end
 
-        unless query_statements.empty?
-          conditions[0] += " AND " unless conditions == [""]
-          conditions[0] += "(#{query_statements.join(" OR ")})"
-        end
-
-        if filters.present?
-          @filterable_fields = model_config.list.fields.select(&:filterable?).inject({}){ |memo, field| memo[field.name.to_sym] = field.searchable_columns; memo }
-          filters.each_pair do |field_name, filters_dump|
-            filters_dump.each do |filter_index, filter_dump|
-              field_statements = []
-              @filterable_fields[field_name.to_sym].each do |field_infos|
-                statement, value1, value2 = build_statement(field_infos[:column], field_infos[:type], filter_dump[:v], (filter_dump[:o] || 'default'))
-                if statement
-                  field_statements << statement
-                  values << value1 unless value1.nil?
-                  values << value2 unless value2.nil?
-                end
-              end
-              filters_statements << "(#{field_statements.join(' OR ')})" unless field_statements.empty?
-            end
-          end
-        end
-
-        unless filters_statements.empty?
-         conditions[0] += " AND " unless conditions == [""]
-         conditions[0] += "#{filters_statements.join(" AND ")}" # filters should all be true
-        end
-
-        conditions += values
-        conditions != [""] ? { :conditions => conditions } : {}
+        [statements.join(' AND '), *values]
       end
 
       def build_statement(column, type, value, operator)
-
         # this operator/value has been discarded (but kept in the dom to override the one stored in the various links of the page)
         return if operator == '_discard' || value == '_discard'
 
@@ -232,7 +160,7 @@ module RailsAdmin
           when 'is', '='
             "#{value}"
           end
-          ["(#{column} #{@like_operator} ?)", value]
+          ["(#{column} #{LIKE_OPERATOR} ?)", value]
         when :datetime, :timestamp, :date
           return unless operator != 'default'
           values = case operator
@@ -257,23 +185,21 @@ module RailsAdmin
           ["(#{column} BETWEEN ? AND ?)", *values]
         when :enum
           return if value.blank?
-          ["(#{column} IN (?))", [value].flatten]
+          ["(#{column} IN (?))", Array.wrap(value)]
         end
       end
 
-      def association_options(association)
-        if association.options[:polymorphic]
-          {
-            :polymorphic => true,
-            :foreign_type => association.options[:foreign_type] || "#{association.name}_type"
-          }
-        elsif association.options[:as]
-          {
-            :as => association.options[:as]
-          }
-        else
-          {}
+      @@polymorphic_parents = nil
+
+      def self.polymorphic_parents(name)
+        @@polymorphic_parents ||= {}.tap do |hash|
+          RailsAdmin::AbstractModel.all(:active_record).each do |am|
+            am.model.reflect_on_all_associations.select{|r| r.options[:as] }.each do |reflection|
+              (hash[reflection.options[:as].to_sym] ||= []) << am.model
+            end
+          end
         end
+        @@polymorphic_parents[name.to_sym]
       end
 
       def association_parent_model_lookup(association)
@@ -333,14 +259,7 @@ module RailsAdmin
       end
 
       def association_child_key_lookup(association)
-        case association.macro
-        when :belongs_to
-          association.options[:foreign_key].try(:to_sym) || "#{association.name}_id".to_sym
-        when :has_one, :has_many, :has_and_belongs_to_many
-          association.foreign_key.to_sym
-        else
-          raise "Unknown association type: #{association.macro.inspect}"
-        end
+        association.foreign_key.to_sym
       end
     end
   end

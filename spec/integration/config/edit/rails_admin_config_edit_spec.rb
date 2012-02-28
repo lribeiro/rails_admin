@@ -7,12 +7,12 @@ describe "RailsAdmin Config DSL Edit Section" do
   subject { page }
 
   describe "default_value" do
-    
+
     it "should be set for all types of input fields" do
       RailsAdmin.config do |config|
         config.excluded_models = []
         config.model(FieldTest) do
-        
+
           field :string_field do
             default_value 'string_field default_value'
           end
@@ -27,14 +27,14 @@ describe "RailsAdmin Config DSL Edit Section" do
           end
         end
       end
-      
+
       visit new_path(:model_name => "field_test")
       find_field('field_test[string_field]').value.should == 'string_field default_value'
       find_field('field_test[text_field]').value.should == 'string_field text_field'
       find_field('field_test[date_field]').value.should == Date.today.to_s
       has_checked_field?('field_test[boolean_field]').should be_true
     end
-    
+
     it "should set default value for selects" do
       RailsAdmin.config(Team) do
         field :color, :enum do
@@ -83,7 +83,7 @@ describe "RailsAdmin Config DSL Edit Section" do
   describe "css hooks" do
     it "should be present" do
       visit new_path(:model_name => "team")
-      should have_selector("#team_division_id_field.field.belongs_to_association_type.division_field")
+      should have_selector("#team_division_id_field.belongs_to_association_type.division_field")
     end
   end
 
@@ -155,7 +155,7 @@ describe "RailsAdmin Config DSL Edit Section" do
           end
         end
         visit new_path(:model_name => "team")
-        should have_selector('fieldset p', :text => "help paragraph to display")
+        should have_selector('fieldset>p', :text => "help paragraph to display")
       end
 
       it "should not show help if not present" do
@@ -167,7 +167,7 @@ describe "RailsAdmin Config DSL Edit Section" do
           end
         end
         visit new_path(:model_name => "team")
-        should_not have_selector('fieldset p')
+        should_not have_selector('fieldset>p')
       end
 
       it "should be able to display multiple help if there are multiple sections" do
@@ -185,9 +185,9 @@ describe "RailsAdmin Config DSL Edit Section" do
           end
         end
         visit new_path(:model_name => "team")
-        should have_selector("fieldset p", :text => 'help for default')
-        should have_selector("fieldset p", :text => 'help for other section')
-        should have_selector("fieldset p", :count => 2)
+        should have_selector("fieldset>p", :text => 'help for default')
+        should have_selector("fieldset>p", :text => 'help for other section')
+        should have_selector("fieldset>p", :count => 2)
       end
 
       it "should use the db column size for the maximum length" do
@@ -272,7 +272,7 @@ describe "RailsAdmin Config DSL Edit Section" do
       should have_selector("label", :text => "Name")
       should have_selector("label", :text => "Logo url")
       should have_selector("label", :text => "Division")
-      should have_selector(".field", :count => 3)
+      should have_selector(".control-group", :count => 3)
     end
 
     it "should have accessor for its fields by type" do
@@ -344,7 +344,7 @@ describe "RailsAdmin Config DSL Edit Section" do
       visit new_path(:model_name => "team")
       should have_selector("label", :text => "Division")
       should have_selector("label", :text => "Name")
-      should have_selector(".field", :count => 2)
+      should have_selector(".control-group", :count => 2)
     end
 
     it "should delegates the label option to the ActiveModel API and memoize I18n awarly" do
@@ -554,7 +554,7 @@ describe "RailsAdmin Config DSL Edit Section" do
     after(:each) do
       Time.zone = 'UTC'
     end
-    
+
     describe "a datetime field" do
 
       it "should default to %B %d, %Y %H:%M" do
@@ -741,7 +741,7 @@ describe "RailsAdmin Config DSL Edit Section" do
       end
     end
   end
-  
+
   describe 'bindings' do
     it 'should be present at creation time' do
       RailsAdmin.config do |config|
@@ -754,7 +754,7 @@ describe "RailsAdmin Config DSL Edit Section" do
           end
         end
       end
-      
+
       visit new_path(:model_name => 'category')
       should have_no_css('#category_parent_category_id')
       click_button 'Save'
@@ -764,8 +764,8 @@ describe "RailsAdmin Config DSL Edit Section" do
       should have_content('Category successfully updated')
     end
   end
-  
-  describe 'nested form' do 
+
+  describe 'nested form' do
 
     it 'should work' do
       RailsAdmin::Config.excluded_models = [RelTest]
@@ -777,15 +777,13 @@ describe "RailsAdmin Config DSL Edit Section" do
       @record.nested_field_tests = [NestedFieldTest.create!(:title => 'title 1'), NestedFieldTest.create!(:title => 'title 2')]
       visit edit_path(:model_name => "field_test", :id => @record.id)
       fill_in "field_test_nested_field_tests_attributes_0_title", :with => 'nested field test title 1 edited'
-      page.find('#field_test_comment_attributes__destroy').set('true')
       page.find('#field_test_nested_field_tests_attributes_1__destroy').set('true')
       click_button "Save"
       @record.reload
-      @record.comment.should == nil
       @record.nested_field_tests.length.should == 1
       @record.nested_field_tests[0].title.should == 'nested field test title 1 edited'
     end
-    
+
     it 'should set bindings[:object] to nested object' do
       RailsAdmin::Config.excluded_models = [RelTest]
       RailsAdmin.config(NestedFieldTest) do
@@ -802,19 +800,19 @@ describe "RailsAdmin Config DSL Edit Section" do
       visit edit_path(:model_name => "field_test", :id => @record.id)
       find('#field_test_nested_field_tests_attributes_0_title_field').should have_content('NestedFieldTest')
     end
-    
+
     it 'should be desactivable' do
       RailsAdmin::Config.excluded_models = [RelTest]
-      
+
       visit new_path(:model_name => "field_test")
-      should have_selector('.label.add_nested_fields')
+      should have_selector('.add_nested_fields')
       RailsAdmin.config(FieldTest) do
         configure :nested_field_tests do
           nested_form false
         end
       end
       visit new_path(:model_name => "field_test")
-      should have_no_selector('.label.add_nested_fields')
+      should have_no_selector('.add_nested_fields')
     end
   end
 

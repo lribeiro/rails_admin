@@ -19,7 +19,7 @@ module RailsAdmin
     DEFAULT_ATTR_ACCESSIBLE_ROLE = Proc.new { :default }
 
     DEFAULT_AUTHORIZE = Proc.new {}
-    
+
     DEFAULT_AUDIT = Proc.new {}
 
     DEFAULT_CURRENT_USER = Proc.new do
@@ -99,7 +99,7 @@ module RailsAdmin
         @attr_accessible_role = blk if blk
         @attr_accessible_role || DEFAULT_ATTR_ACCESSIBLE_ROLE
       end
-      
+
       # Setup auditing/history/versioning provider that observe objects lifecycle
       def audit_with(*args, &block)
         extension = args.shift
@@ -112,7 +112,7 @@ module RailsAdmin
         end
         @audit || DEFAULT_AUDIT
       end
-      
+
       # Setup authorization to be run as a before filter
       # This is run inside the controller instance so you can setup any authorization you need to.
       #
@@ -191,6 +191,28 @@ module RailsAdmin
         end
       end
 
+      # pool of all found model names from the whole application
+      def models_pool
+        possible =
+          included_models.map(&:to_s).presence || (
+          @@system_models ||= # memoization for tests
+            ([Rails.application] + Rails::Application::Railties.engines).map do |app|
+              (app.paths['app/models'] + app.config.autoload_paths).map do |load_path|
+                Dir.glob(app.root.join(load_path)).map do |load_dir|
+                  Dir.glob(load_dir + "/**/*.rb").map do |filename|
+                    # app/models/module/class.rb => module/class.rb => module/class => Module::Class
+                    lchomp(filename, "#{app.root.join(load_dir)}/").chomp('.rb').camelize
+                  end
+                end
+              end
+            end.flatten
+          )
+
+        excluded = (excluded_models.map(&:to_s) + ['RailsAdmin::History'])
+
+        (possible - excluded).uniq.sort
+      end
+
       # Loads a model configuration instance from the registry or registers
       # a new one if one is yet to be added.
       #
@@ -206,7 +228,7 @@ module RailsAdmin
       def model(entity, &block)
         key = begin
           if entity.kind_of?(RailsAdmin::AbstractModel)
-            entity.model.name.to_sym
+            entity.model.try(:name).try :to_sym
           elsif entity.kind_of?(Class)
             entity.name.to_sym
           elsif entity.kind_of?(String) || entity.kind_of?(Symbol)
@@ -219,7 +241,7 @@ module RailsAdmin
         config.instance_eval(&block) if block
         config
       end
-            
+
       def default_hidden_fields=(fields)
         if fields.is_a?(Array)
           @default_hidden_fields = {}
@@ -229,12 +251,12 @@ module RailsAdmin
           @default_hidden_fields = fields
         end
       end
-      
+
       # Returns action configuration object
       def actions(&block)
         RailsAdmin::Config::Actions.instance_eval(&block) if block
       end
-      
+
       # Returns all model configurations
       #
       # If a block is given it is evaluated in the context of configuration
@@ -280,10 +302,17 @@ module RailsAdmin
       # Get all models that are configured as visible sorted by their weight and label.
       #
       # @see RailsAdmin::Config::Hideable
-      def visible_models
-        self.models.select {|m| m.visible? }.sort do |a, b|
+
+      def visible_models(bindings)
+        models.map{|m| m.with(bindings) }.select{|m| m.visible? && bindings[:controller].authorized?(:index, m.abstract_model)}.sort do |a, b|
           (weight_order = a.weight <=> b.weight) == 0 ? a.label.downcase <=> b.label.downcase : weight_order
         end
+      end
+
+      private
+
+      def lchomp(base, arg)
+        base.to_s.reverse.chomp(arg.to_s.reverse).reverse
       end
     end
 
