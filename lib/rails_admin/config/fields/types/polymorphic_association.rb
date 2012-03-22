@@ -46,7 +46,7 @@ module RailsAdmin
           end
 
           def associated_model_config
-            @associated_model_config ||= association[:parent_model_proc].call.map{|type| RailsAdmin.config(type) }.select{|config| !config.excluded? }
+            @associated_model_config ||= association[:model_proc].call.map{|type| RailsAdmin.config(type) }.select{|config| !config.excluded? }
           end
 
           def polymorphic_type_collection
@@ -60,7 +60,7 @@ module RailsAdmin
               [config.abstract_model.model.name, config.abstract_model.to_param]
             end
 
-            Hash[*types.collect { |v|
+            ::Hash[*types.collect { |v|
                   [v[0], bindings[:view].index_path(v[1])]
                 }.flatten]
           end

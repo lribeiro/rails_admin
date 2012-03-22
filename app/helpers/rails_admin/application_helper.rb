@@ -79,7 +79,7 @@ module RailsAdmin
           o = a.send(:eval, 'bindings[:object]')
           content_tag(:li, :class => "#{"active" if current_action?(a, am, o)}") do
             if a.http_methods.include?(:get)
-              link_to wording_for(:breadcrumb, a, am, o), { :action => a.action_name, :controller => 'rails_admin/main', :model_name => am.try(:to_param), :id => o.try(:id) }
+              link_to wording_for(:breadcrumb, a, am, o), { :action => a.action_name, :controller => 'rails_admin/main', :model_name => am.try(:to_param), :id => (o.try(:persisted?) && o.try(:id) || nil) }
             else
               content_tag(:span, wording_for(:breadcrumb, a, am, o))
             end
@@ -95,7 +95,7 @@ module RailsAdmin
         wording = wording_for(:menu, action)
         %{
           <li data-original-title="#{wording}" rel="#{'tooltip' if only_icon}" class="icon #{action.key}_#{parent}_link #{'active' if current_action?(action)}">
-            <a href="#{url_for({ :action => action.action_name, :controller => 'rails_admin/main', :model_name => abstract_model.try(:to_param), :id => object.try(:id) })}">
+            <a href="#{url_for({ :action => action.action_name, :controller => 'rails_admin/main', :model_name => abstract_model.try(:to_param), :id => (object.try(:persisted?) && object.try(:id) || nil) })}">
               <i class="#{action.link_icon}"></i>
               <span#{only_icon ? " style='display:none'" : ""}>#{wording}</span>
             </a>
@@ -109,7 +109,7 @@ module RailsAdmin
       return '' if actions.empty?
       content_tag :li, { :class => 'dropdown', :style => 'float:right' } do
         content_tag(:a, { :class => 'dropdown-toggle', :'data-toggle' => "dropdown", :href => '#' }) { t('admin.misc.bulk_menu_title').html_safe + '<b class="caret"></b>'.html_safe } +
-        content_tag(:ul, :class => 'dropdown-menu') do
+        content_tag(:ul, :class => 'dropdown-menu', :style => 'left:auto; right:0;') do
           actions.map do |action|
             content_tag :li do
               link_to_function wording_for(:bulk_link, action), "jQuery('#bulk_action').val('#{action.action_name}'); jQuery('#bulk_form').submit()"

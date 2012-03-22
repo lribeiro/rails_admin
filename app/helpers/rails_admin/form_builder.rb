@@ -23,7 +23,7 @@ module RailsAdmin
       if (fields = fieldset.with(:form => self, :object => @object, :view => @template).visible_fields).length > 0
         @template.content_tag :fieldset do
           contents = []
-          contents << @template.content_tag(:legend, %{<i class="icon-chevron-#{(fieldset.active? ? 'down' : 'right')}"></i> #{fieldset.label}}.html_safe, :style => "#{fieldset.label == I18n.translate("admin.form.basic_info") ? 'display:none' : ''}")
+          contents << @template.content_tag(:legend, %{<i class="icon-chevron-#{(fieldset.active? ? 'down' : 'right')}"></i> #{fieldset.label}}.html_safe, :style => "#{fieldset.name == :default ? 'display:none' : ''}")
           contents << @template.content_tag(:p, fieldset.help) if fieldset.help.present?
           contents << fields.map{ |field| field_wrapper_for(field, nested_in) }.join
           contents.join.html_safe
@@ -32,15 +32,11 @@ module RailsAdmin
     end
 
     def field_wrapper_for field, nested_in
-      if field.is_a?(RailsAdmin::Config::Fields::Types::Hidden)
-        input_for(field)
-      else
-        # do not show nested field if the target is the origin
-        unless field.inverse_of.presence && field.inverse_of == nested_in
-          @template.content_tag(:div, :class => "control-group #{field.type_css_class} #{field.css_class} #{'error' if field.errors.present?}", :id => "#{dom_id(field)}_field") do
-            label(field.method_name, field.label, :class => 'control-label') +
-            (field.nested_form ? field_for(field) : input_for(field))
-          end
+      # do not show nested field if the target is the origin
+      unless field.inverse_of.presence && field.inverse_of == nested_in
+        @template.content_tag(:div, :class => "control-group #{field.type_css_class} #{field.css_class} #{'error' if field.errors.present?}", :id => "#{dom_id(field)}_field") do
+          label(field.method_name, field.label, :class => 'control-label') +
+          (field.nested_form ? field_for(field) : input_for(field))
         end
       end
     end
@@ -62,7 +58,7 @@ module RailsAdmin
     end
 
     def field_for field
-      if field.read_only
+      if field.read_only?
         field.pretty_value.to_s.html_safe
       else
         field.render
@@ -102,7 +98,7 @@ module RailsAdmin
     end
 
     def dom_name field
-      (@dom_name ||= {})[field.name] ||= %{#{@object_name}#{options[:index] && "[#{options[:index]}]"}[#{field.method_name}]#{field.is_a?(Config::Fields::Types::HasManyAssociation) ? '[]' : ''}}
+      (@dom_name ||= {})[field.name] ||= %{#{@object_name}#{options[:index] && "[#{options[:index]}]"}[#{field.method_name}]#{field.is_a?(Config::Fields::Association) && field.multiple? ? '[]' : ''}}
     end
   end
 end

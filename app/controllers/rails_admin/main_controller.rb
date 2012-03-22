@@ -30,8 +30,10 @@ module RailsAdmin
     end
 
     def list_entries(model_config = @model_config, auth_scope_key = :index, additional_scope = get_association_scope_from_params, pagination = !(params[:associated_collection] || params[:all]))
-      scope = @authorization_adapter && @authorization_adapter.query(auth_scope_key, model_config.abstract_model)
-      scope = model_config.abstract_model.scoped.merge(scope)
+      scope = model_config.abstract_model.scoped
+      if auth_scope = @authorization_adapter && @authorization_adapter.query(auth_scope_key, model_config.abstract_model)
+        scope = scope.merge(auth_scope)
+      end
       scope = scope.instance_eval(&additional_scope) if additional_scope
 
       get_collection(model_config, scope, pagination)
@@ -53,32 +55,21 @@ module RailsAdmin
       field = model_config.list.fields.find{ |f| f.name.to_s == params[:sort] }
 
       column = if field.nil? || field.sortable == true # use params[:sort] on the base table
-        "#{abstract_model.model.table_name}.#{params[:sort]}"
+        "#{abstract_model.table_name}.#{params[:sort]}"
       elsif field.sortable == false # use default sort, asked field is not sortable
-        "#{abstract_model.model.table_name}.#{model_config.list.sort_by}"
+        "#{abstract_model.table_name}.#{model_config.list.sort_by}"
       elsif field.sortable.is_a?(String) && field.sortable.include?('.') # just provide sortable, don't do anything smart
         field.sortable
       elsif field.sortable.is_a?(Hash) # just join sortable hash, don't do anything smart
         "#{field.sortable.keys.first}.#{field.sortable.values.first}"
       elsif field.association? # use column on target table
-        "#{field.associated_model_config.abstract_model.model.table_name}.#{field.sortable}"
+        "#{field.associated_model_config.abstract_model.table_name}.#{field.sortable}"
       else # use described column in the field conf.
-        "#{abstract_model.model.table_name}.#{field.sortable}"
+        "#{abstract_model.table_name}.#{field.sortable}"
       end
 
       reversed_sort = (field ? field.sort_reverse? : model_config.list.sort_reverse?)
       {:sort => column, :sort_reverse => (params[:sort_reverse] == reversed_sort.to_s)}
-    end
-
-    def get_attributes
-      attributes = params[@abstract_model.to_param.gsub('~','_')] || {}
-      attributes.each do |key, value|
-        # Deserialize the attribute if attribute is serialized
-        if @abstract_model.model.serialized_attributes.keys.include?(key) and value.is_a? String
-          attributes[key] = YAML::load(value)
-        end
-      end
-      attributes
     end
 
     def redirect_to_on_success
@@ -89,6 +80,19 @@ module RailsAdmin
         redirect_to edit_path(:id => @object.id, :return_to => params[:return_to]), :flash => { :success => notice }
       else
         redirect_to back_or_index, :flash => { :success => notice }
+      end
+    end
+
+    def sanitize_params_for!(action, model_config = @model_config, _params = params[@abstract_model.param_key])
+      return unless _params.present?
+      fields = model_config.send(action).fields
+      fields.select{ |f| f.respond_to?(:parse_input) }.each {|f| f.parse_input(_params) }
+
+      fields.select(&:nested_form).each do |association|
+        children_params = association.multiple? ? _params[association.method_name].try(:values) : [_params[association.method_name]].compact
+        (children_params || []).each do |children_param|
+          sanitize_params_for!(:nested, association.associated_model_config, children_param)
+        end
       end
     end
 
@@ -129,8 +133,8 @@ module RailsAdmin
       source_model_config = source_abstract_model.config
       source_object = source_abstract_model.get(params[:source_object_id])
       action = params[:current_action].in?(['create', 'update']) ? params[:current_action] : 'edit'
-      association = source_model_config.send(action).fields.find{|f| f.name == params[:associated_collection].to_sym }.with(:controller => self, :object => source_object)
-      association.associated_collection_scope
+      @association = source_model_config.send(action).fields.find{|f| f.name == params[:associated_collection].to_sym }.with(:controller => self, :object => source_object)
+      @association.associated_collection_scope
     end
 
     def associations_hash

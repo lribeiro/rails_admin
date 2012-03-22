@@ -5,7 +5,8 @@ module RailsAdmin
   module Adapters
     module ActiveRecord
       DISABLED_COLUMN_TYPES = [:tsvector, :blob, :binary, :spatial]
-      LIKE_OPERATOR =  ::ActiveRecord::Base.configurations[Rails.env]['adapter'] == "postgresql" ? 'ILIKE' : 'LIKE'
+      AR_ADAPTER = ::ActiveRecord::Base.configurations[Rails.env]['adapter']
+      LIKE_OPERATOR = AR_ADAPTER == "postgresql" ? 'ILIKE' : 'LIKE'
 
       def new(params = {})
         AbstractObject.new(model.new(params))
@@ -46,6 +47,10 @@ module RailsAdmin
       def destroy(objects)
         Array.wrap(objects).each &:destroy
       end
+      
+      def primary_key
+        model.primary_key
+      end
 
       def associations
         model.reflect_on_all_associations.map do |association|
@@ -53,10 +58,9 @@ module RailsAdmin
             :name => association.name.to_sym,
             :pretty_name => association.name.to_s.tr('_', ' ').capitalize,
             :type => association.macro,
-            :parent_model_proc => Proc.new { association_parent_model_lookup(association) },
-            :parent_key => association_parent_key_lookup(association),
-            :child_model_proc => Proc.new { association_child_model_lookup(association) },
-            :child_key => association_child_key_lookup(association),
+            :model_proc => Proc.new { association_model_lookup(association) },
+            :primary_key_proc => Proc.new { association_primary_key_lookup(association) },
+            :foreign_key => association_foreign_key_lookup(association),
             :foreign_type => association_foreign_type_lookup(association),
             :as => association_as_lookup(association),
             :polymorphic => association_polymorphic_lookup(association),
@@ -79,6 +83,22 @@ module RailsAdmin
             :serial? => property.primary,
           }
         end
+      end
+
+      def table_name
+        model.table_name
+      end
+
+      def serialized_attributes
+        model.serialized_attributes.keys
+      end
+
+      def encoding
+        Rails.configuration.database_configuration[Rails.env]['encoding']
+      end
+
+      def embedded?
+        false
       end
 
       private
@@ -159,61 +179,41 @@ module RailsAdmin
             "%#{value}"
           when 'is', '='
             "#{value}"
+          else
+            return
           end
           ["(#{column} #{LIKE_OPERATOR} ?)", value]
         when :datetime, :timestamp, :date
-          return unless operator != 'default'
-          values = case operator
-          when 'today'
-            [Date.today.beginning_of_day, Date.today.end_of_day]
-          when 'yesterday'
-            [Date.yesterday.beginning_of_day, Date.yesterday.end_of_day]
-          when 'this_week'
-            [Date.today.beginning_of_week.beginning_of_day, Date.today.end_of_week.end_of_day]
-          when 'last_week'
-            [1.week.ago.to_date.beginning_of_week.beginning_of_day, 1.week.ago.to_date.end_of_week.end_of_day]
-          when 'less_than'
-            return if value.blank?
-            [value.to_i.days.ago, DateTime.now]
-          when 'more_than'
-            return if value.blank?
-            [2000.years.ago, value.to_i.days.ago]
-          when 'mmddyyyy'
-            return if (value.blank? || value.match(/([0-9]{8})/).nil?)
-            [Date.strptime(value.match(/([0-9]{8})/)[1], '%m%d%Y').beginning_of_day, Date.strptime(value.match(/([0-9]{8})/)[1], '%m%d%Y').end_of_day]
+          start_date, end_date = get_filtering_duration(operator, value)
+          
+          if start_date && end_date
+            ["(#{column} BETWEEN ? AND ?)", start_date, end_date]
+          elsif start_date
+            ["(#{column} >= ?)", start_date]
+          elsif end_date
+            ["(#{column} <= ?)", end_date]
           end
-          ["(#{column} BETWEEN ? AND ?)", *values]
         when :enum
           return if value.blank?
           ["(#{column} IN (?))", Array.wrap(value)]
         end
       end
 
-      @@polymorphic_parents = nil
-
-      def self.polymorphic_parents(name)
-        @@polymorphic_parents ||= {}.tap do |hash|
-          RailsAdmin::AbstractModel.all(:active_record).each do |am|
-            am.model.reflect_on_all_associations.select{|r| r.options[:as] }.each do |reflection|
-              (hash[reflection.options[:as].to_sym] ||= []) << am.model
-            end
-          end
+      if AR_ADAPTER == "postgresql"
+        def beginning_of_date(date)
+          date.beginning_of_day
         end
-        @@polymorphic_parents[name.to_sym]
+      else
+        def beginning_of_date(date)
+          date.yesterday.end_of_day
+        end
       end
 
-      def association_parent_model_lookup(association)
-        case association.macro
-        when :belongs_to
-          if association.options[:polymorphic]
-            RailsAdmin::Adapters::ActiveRecord.polymorphic_parents(association.name) || []
-          else
-            association.klass
-          end
-        when :has_one, :has_many, :has_and_belongs_to_many
-          association.active_record
+      def association_model_lookup(association)
+        if association.options[:polymorphic]
+          RailsAdmin::AbstractModel.polymorphic_parents(:active_record, association.name) || []
         else
-          raise "Unknown association type: #{association.macro.inspect}"
+          association.klass
         end
       end
 
@@ -232,11 +232,11 @@ module RailsAdmin
       end
 
       def association_polymorphic_lookup(association)
-        association.options[:polymorphic]
+        !!association.options[:polymorphic]
       end
 
-      def association_parent_key_lookup(association)
-        [:id]
+      def association_primary_key_lookup(association)
+        association.options[:primary_key] || association.klass.primary_key
       end
 
       def association_inverse_of_lookup(association)
@@ -247,18 +247,7 @@ module RailsAdmin
         association.options[:readonly]
       end
 
-      def association_child_model_lookup(association)
-        case association.macro
-        when :belongs_to
-          association.active_record
-        when :has_one, :has_many, :has_and_belongs_to_many
-          association.klass
-        else
-          raise "Unknown association type: #{association.macro.inspect}"
-        end
-      end
-
-      def association_child_key_lookup(association)
+      def association_foreign_key_lookup(association)
         association.foreign_key.to_sym
       end
     end

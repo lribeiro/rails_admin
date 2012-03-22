@@ -31,6 +31,11 @@ FactoryGirl.define do
     sequence(:name) { |n| "League #{n}" }
   end
 
+  factory :division do
+    sequence(:custom_league_id)
+    sequence(:name) { |n| "Division #{n}" }
+  end
+
   factory :fan do
     sequence(:name) { |n| "Fan #{n}" }
   end
@@ -62,5 +67,23 @@ FactoryGirl.define do
 
   factory :hardball do
     color('blue')
+  end
+
+  factory :article do
+    sequence(:title) { |n| "Article #{n}" }
+  end
+
+  factory :author do
+    sequence(:name) { |n| "Author #{n}" }
+  end
+
+  factory :tag do
+    sequence(:name) { |n| "Tag #{n}" }
+  end
+
+  factory :mongoid_field_test do
+    sequence(:name) { |n| "Mongoid Field Test #{n}" }
+    array_field([1])
+    hash_field({:a => 1})
   end
 end
