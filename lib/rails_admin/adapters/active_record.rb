@@ -4,7 +4,7 @@ require 'rails_admin/adapters/active_record/abstract_object'
 module RailsAdmin
   module Adapters
     module ActiveRecord
-      DISABLED_COLUMN_TYPES = [:tsvector, :blob, :binary, :spatial]
+      DISABLED_COLUMN_TYPES = [:tsvector, :blob, :binary, :spatial, :hstore]
       AR_ADAPTER = ::ActiveRecord::Base.configurations[Rails.env]['adapter']
       LIKE_OPERATOR = AR_ADAPTER == "postgresql" ? 'ILIKE' : 'LIKE'
 
@@ -35,7 +35,9 @@ module RailsAdmin
         scope = scope.where(model.primary_key => options[:bulk_ids]) if options[:bulk_ids]
         scope = scope.where(query_conditions(options[:query])) if options[:query]
         scope = scope.where(filter_conditions(options[:filters])) if options[:filters]
-        scope = scope.page(options[:page]).per(options[:per]) if options[:page] && options[:per]
+        if options[:page] && options[:per]
+          scope = scope.send(Kaminari.config.page_method_name, options[:page]).per(options[:per])
+        end
         scope = scope.reorder("#{options[:sort]} #{options[:sort_reverse] ? 'asc' : 'desc'}") if options[:sort]
         scope
       end
@@ -47,7 +49,7 @@ module RailsAdmin
       def destroy(objects)
         Array.wrap(objects).each &:destroy
       end
-      
+
       def primary_key
         model.primary_key
       end
@@ -183,9 +185,9 @@ module RailsAdmin
             return
           end
           ["(#{column} #{LIKE_OPERATOR} ?)", value]
-        when :datetime, :timestamp, :date
+        when :date
           start_date, end_date = get_filtering_duration(operator, value)
-          
+
           if start_date && end_date
             ["(#{column} BETWEEN ? AND ?)", start_date, end_date]
           elsif start_date
@@ -193,19 +195,19 @@ module RailsAdmin
           elsif end_date
             ["(#{column} <= ?)", end_date]
           end
+        when :datetime, :timestamp
+          start_date, end_date = get_filtering_duration(operator, value)
+
+          if start_date && end_date
+            ["(#{column} BETWEEN ? AND ?)", start_date.to_time.beginning_of_day, end_date.to_time.end_of_day]
+          elsif start_date
+            ["(#{column} >= ?)", start_date.to_time.beginning_of_day]
+          elsif end_date
+            ["(#{column} <= ?)", end_date.to_time.end_of_day]
+          end
         when :enum
           return if value.blank?
           ["(#{column} IN (?))", Array.wrap(value)]
-        end
-      end
-
-      if AR_ADAPTER == "postgresql"
-        def beginning_of_date(date)
-          date.beginning_of_day
-        end
-      else
-        def beginning_of_date(date)
-          date.yesterday.end_of_day
         end
       end
 
