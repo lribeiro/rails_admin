@@ -40,11 +40,11 @@ module RailsAdmin
         def initialize(controller, user_class = User)
           raise "PaperTrail not found" unless defined?(PaperTrail)
           @controller = controller
-          @user_class = user_class
+          @user_class = user_class.to_s.constantize
         end
 
         def latest
-          Version.limit(100).map{|version| VersionProxy.new(version, @user_class)}
+          ::Version.limit(100).map{|version| VersionProxy.new(version, @user_class)}
         end
 
         def delete_object(message, object, model, user)
@@ -66,7 +66,7 @@ module RailsAdmin
             sort = :created_at
             sort_reverse = "true"
           end
-          versions = Version.where :item_type => model.model.name
+          versions = ::Version.where :item_type => model.model.name
           versions = versions.where("event LIKE ?", "%#{query}%") if query.present?
           versions = versions.order(sort_reverse == "true" ? "#{sort} DESC" : sort)
           versions = all ? versions : versions.send(Kaminari.config.page_method_name, page.presence || "1").per(per_page)
@@ -80,7 +80,7 @@ module RailsAdmin
             sort = :created_at
             sort_reverse = "true"
           end
-          versions = Version.where :item_type => model.model.name, :item_id => object.id
+          versions = ::Version.where :item_type => model.model.name, :item_id => object.id
           versions = versions.where("event LIKE ?", "%#{query}%") if query.present?
           versions = versions.order(sort_reverse == "true" ? "#{sort} DESC" : sort)
           versions = all ? versions : versions.send(Kaminari.config.page_method_name, page.presence || "1").per(per_page)

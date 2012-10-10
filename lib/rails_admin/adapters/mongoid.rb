@@ -7,6 +7,7 @@ module RailsAdmin
     module Mongoid
       STRING_TYPE_COLUMN_NAMES = [:name, :title, :subject]
       DISABLED_COLUMN_TYPES = ['Range']
+      ObjectId = (::Mongoid::VERSION >= '3' ? ::Moped::BSON::ObjectId : ::BSON::ObjectId)
 
       def new(params = {})
         AbstractObject.new(model.new)
@@ -15,8 +16,13 @@ module RailsAdmin
       def get(id)
         begin
           AbstractObject.new(model.find(id))
-        rescue BSON::InvalidObjectId, ::Mongoid::Errors::DocumentNotFound
-          nil
+        rescue => e
+          if ['BSON::InvalidObjectId', 'Mongoid::Errors::DocumentNotFound',
+              'Mongoid::Errors::InvalidFind', 'Moped::Errors::InvalidObjectId'].include? e.class.to_s
+            nil
+          else
+            raise e
+          end
         end
       end
 
@@ -30,7 +36,7 @@ module RailsAdmin
 
       def all(options = {},scope=nil)
         scope ||= self.scoped
-        scope = scope.includes(options[:include]) if options[:include]
+        scope = scope.includes(*options[:include]) if options[:include]
         scope = scope.limit(options[:limit]) if options[:limit]
         scope = scope.any_in(:_id => options[:bulk_ids]) if options[:bulk_ids]
         scope = scope.where(query_conditions(options[:query])) if options[:query]
@@ -77,54 +83,18 @@ module RailsAdmin
       def properties
         fields = model.fields.reject{|name, field| DISABLED_COLUMN_TYPES.include?(field.type.to_s) }
         fields.map do |name,field|
-          ar_type = {
-            "Array"          => { :type => :serialized },
-            "BigDecimal"     => { :type => :decimal },
-            "Boolean"        => { :type => :boolean },
-            "BSON::ObjectId" => { :type => :bson_object_id, :serial? => (name == primary_key) },
-            "Date"           => { :type => :date },
-            "DateTime"       => { :type => :datetime },
-            "Float"          => { :type => :float },
-            "Hash"           => { :type => :serialized },
-            "Integer"        => { :type => :integer },
-            "Object"         => (
-              if associations.find{|a| a[:type] == :belongs_to && a[:foreign_key] == name.to_sym}
-                { :type => :bson_object_id }
-              else
-                { :type => :string, :length => 255 }
-              end
-            ),
-            "String"         => (
-              if (length = length_validation_lookup(name)) && length < 256
-                { :type => :string, :length => length }
-              elsif STRING_TYPE_COLUMN_NAMES.include?(name.to_sym)
-                { :type => :string, :length => 255 }
-              else
-                { :type => :text }
-              end
-            ),
-            "Symbol"         => { :type => :string, :length => 255 },
-            "Time"           => { :type => :datetime },
-          }[field.type.to_s] or raise "Need to map field #{field.type.to_s} for field name #{name} in #{model.inspect}"
-
           {
             :name => field.name.to_sym,
             :length => nil,
             :pretty_name => field.name.to_s.gsub('_', ' ').strip.capitalize,
             :nullable? => true,
             :serial? => false,
-          }.merge(ar_type)
+          }.merge(type_lookup(name, field))
         end
       end
 
       def table_name
-        model.collection.name
-      end
-
-      def serialized_attributes
-        # Mongoid Array and Hash type columns are mapped to RA serialized type
-        # through type detection in self#properties.
-        []
+        model.collection_name.to_s
       end
 
       def encoding
@@ -135,6 +105,10 @@ module RailsAdmin
         @embedded ||= !!model.associations.values.find{|a| a.macro.to_sym == :embedded_in }
       end
 
+      def object_id_from_string(str)
+        ObjectId.from_string(str)
+      end
+
       private
 
       def query_conditions(query, fields = config.list.fields.select(&:queryable?))
@@ -143,7 +117,7 @@ module RailsAdmin
         fields.each do |field|
           conditions_per_collection = {}
           field.searchable_columns.flatten.each do |column_infos|
-            collection_name, column_name = column_infos[:column].split('.')
+            collection_name, column_name = parse_collection_name(column_infos[:column])
             statement = build_statement(column_name, column_infos[:type], query, field.search_operator)
             if statement
               conditions_per_collection[collection_name] ||= []
@@ -171,7 +145,7 @@ module RailsAdmin
             field = fields.find{|f| f.name.to_s == field_name}
             next unless field
             field.searchable_columns.each do |column_infos|
-              collection_name, column_name = column_infos[:column].split('.')
+              collection_name, column_name = parse_collection_name(column_infos[:column])
               statement = build_statement(column_name, column_infos[:type], filter_dump[:v], (filter_dump[:o] || 'default'))
               if statement
                 conditions_per_collection[collection_name] ||= []
@@ -226,11 +200,11 @@ module RailsAdmin
           return if value.blank?
           value = case operator
           when 'default', 'like'
-            Regexp.compile(Regexp.escape(value))
+            Regexp.compile(Regexp.escape(value), Regexp::IGNORECASE)
           when 'starts_with'
-            Regexp.compile("^#{Regexp.escape(value)}")
+            Regexp.compile("^#{Regexp.escape(value)}", Regexp::IGNORECASE)
           when 'ends_with'
-            Regexp.compile("#{Regexp.escape(value)}$")
+            Regexp.compile("#{Regexp.escape(value)}$", Regexp::IGNORECASE)
           when 'is', '='
             value.to_s
           else
@@ -261,9 +235,43 @@ module RailsAdmin
           return if value.blank?
           { column => { "$in" => Array.wrap(value) } }
         when :belongs_to_association, :bson_object_id
-          object_id = (BSON::ObjectId(value) rescue nil)
+          object_id = (object_id_from_string(value) rescue nil)
           { column => object_id } if object_id
         end
+      end
+
+      def type_lookup(name, field)
+        {
+          "Array"          => { :type => :serialized },
+          "BigDecimal"     => { :type => :decimal },
+          "Boolean"        => { :type => :boolean },
+          "BSON::ObjectId" => { :type => :bson_object_id, :serial? => (name == primary_key) },
+          "Moped::BSON::ObjectId" => { :type => :bson_object_id, :serial? => (name == primary_key) },
+          "Date"           => { :type => :date },
+          "DateTime"       => { :type => :datetime },
+          "Float"          => { :type => :float },
+          "Hash"           => { :type => :serialized },
+          "Money"          => { :type => :serialized },
+          "Integer"        => { :type => :integer },
+          "Object"         => (
+            if associations.find{|a| a[:type] == :belongs_to && a[:foreign_key] == name.to_sym}
+              { :type => :bson_object_id }
+            else
+              { :type => :string, :length => 255 }
+            end
+          ),
+            "String"         => (
+              if (length = length_validation_lookup(name)) && length < 256
+                { :type => :string, :length => length }
+              elsif STRING_TYPE_COLUMN_NAMES.include?(name.to_sym)
+                { :type => :string, :length => 255 }
+              else
+                { :type => :text }
+              end
+          ),
+            "Symbol"         => { :type => :string, :length => 255 },
+            "Time"           => { :type => :datetime },
+        }[field.type.to_s] or raise "Type #{field.type.to_s} for field :#{name} in #{model.inspect} not supported"
       end
 
       def association_model_proc_lookup(association)
@@ -337,7 +345,8 @@ module RailsAdmin
 
       def length_validation_lookup(name)
         shortest = model.validators.select do |validator|
-          validator.attributes.include?(name.to_sym) &&
+          validator.respond_to?(:attributes) &&
+            validator.attributes.include?(name.to_sym) &&
             validator.kind == :length &&
             validator.options[:maximum]
         end.min{|a, b| a.options[:maximum] <=> b.options[:maximum] }
@@ -345,6 +354,15 @@ module RailsAdmin
           shortest.options[:maximum]
         else
           false
+        end
+      end
+
+      def parse_collection_name(column)
+        collection_name, column_name = column.split('.')
+        if [:embeds_one, :embeds_many].include?(model.associations[collection_name].try(:macro).try(:to_sym))
+          [table_name, column]
+        else
+          [collection_name, column_name]
         end
       end
 

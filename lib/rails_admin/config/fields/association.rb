@@ -18,11 +18,10 @@ module RailsAdmin
         register_instance_option(:pretty_value) do
           v = bindings[:view]
           [value].flatten.select(&:present?).map do |associated|
-            amc = polymorphic? ? RailsAdmin::Config.model(associated) : associated_model_config # perf optimization for non-polymorphic associations
+            amc = polymorphic? ? RailsAdmin.config(associated) : associated_model_config # perf optimization for non-polymorphic associations
             am = amc.abstract_model
             wording = associated.send(amc.object_label_method)
-            can_see = v.authorized?(:show, am, associated) && !am.embedded?
-            can_see = can_see && (show_action = RailsAdmin::Config::Actions.find(:show, { :controller => v.controller, :abstract_model => am, :object => associated }))
+            can_see = !am.embedded? && (show_action = v.action(:show, am, associated))
             can_see ? v.link_to(wording, v.url_for(:action => show_action.action_name, :model_name => am.to_param, :id => associated.id), :class => 'pjax') : wording
           end.to_sentence.html_safe
         end
@@ -47,7 +46,12 @@ module RailsAdmin
             scope.limit(associated_collection_scope_limit)
           end
         end
-
+        
+        # inverse relationship
+        register_instance_option :inverse_of do
+          association[:inverse_of]
+        end
+        
         # preload entire associated collection (per associated_collection_scope) on load
         # Be sure to set limit in associated_collection_scope if set is large
         register_instance_option :associated_collection_cache_all do
@@ -72,11 +76,6 @@ module RailsAdmin
         # Reader for the association's key
         def foreign_key
           association[:foreign_key]
-        end
-
-        # Reader for the inverse relationship
-        def inverse_of
-          association[:inverse_of]
         end
         
         # Reader whether this is a polymorphic association

@@ -40,14 +40,14 @@ module RailsAdmin
       end
     end
 
-    def initialize(m)
-      @model_name = m.to_s
-      if m.ancestors.map(&:to_s).include?('ActiveRecord::Base') && !m.abstract_class?
+    def initialize(model_or_model_name)
+      @model_name = model_or_model_name.to_s
+      if model.ancestors.map(&:to_s).include?('ActiveRecord::Base') && !model.abstract_class?
         # ActiveRecord
         @adapter = :active_record
         require 'rails_admin/adapters/active_record'
         extend Adapters::ActiveRecord
-      elsif m.ancestors.map(&:to_s).include?('Mongoid::Document')
+      elsif model.ancestors.map(&:to_s).include?('Mongoid::Document')
         # Mongoid
         @adapter = :mongoid
         require 'rails_admin/adapters/mongoid'
@@ -57,7 +57,7 @@ module RailsAdmin
 
     # do not store a reference to the model, does not play well with ActiveReload/Rails3.2
     def model
-      @model_name.try :constantize
+      @model_name.constantize
     end
 
     def config
@@ -65,11 +65,11 @@ module RailsAdmin
     end
 
     def to_param
-      model.to_s.split("::").map(&:underscore).join("~")
+      @model_name.split("::").map(&:underscore).join("~")
     end
 
     def param_key
-      model.to_s.split("::").map(&:underscore).join("_")
+      @model_name.split("::").map(&:underscore).join("_")
     end
 
     def pretty_name
@@ -78,6 +78,21 @@ module RailsAdmin
 
     def where(conditions)
       model.where(conditions)
+    end
+
+    def each_associated_children(object)
+      associations.each do |association|
+        case association[:type]
+        when :has_one
+          if child = object.send(association[:name])
+            yield(association, child)
+          end
+        when :has_many
+          object.send(association[:name]).each do |child|
+            yield(association, child)
+          end
+        end
+      end
     end
 
     private

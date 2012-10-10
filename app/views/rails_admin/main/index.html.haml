@@ -77,7 +77,7 @@
     dayNamesMin: #{raw RailsAdmin::Config::Fields::Types::Datetime.abbr_day_names.to_json},
     firstDay: "1",
     monthNames: #{raw RailsAdmin::Config::Fields::Types::Datetime.month_names.to_json},
-    monthNamesShort: #{raw RailsAdmin::Config::Fields::Types::Datetime.abbr_month_names.to_json},
+    monthNamesShort: #{raw RailsAdmin::Config::Fields::Types::Datetime.abbr_month_names.to_json}
     }
     }
     
@@ -113,7 +113,7 @@
             - if property.sortable
               - sort_location = index_path params.except('sort_reverse').except('page').merge(:sort => property.name).merge(selected && sort_reverse != "true" ? {:sort_reverse => "true"} : {})
               - sort_direction = selected ? (sort_reverse == 'true' ? "headerSortUp" : "headerSortDown") : nil
-            %th{:class => "#{property.sortable && "header pjax" || nil} #{property.sortable && sort_direction ? sort_direction : nil} #{property.css_class} #{property.type_css_class}", :'data-href' => (property.sortable && sort_location)}= property.label
+            %th{:class => "#{property.sortable && "header pjax" || nil} #{property.sortable && sort_direction ? sort_direction : nil} #{property.css_class} #{property.type_css_class}", :'data-href' => (property.sortable && sort_location), :rel => "tooltip", :title => "#{property.hint}"}= property.label
           - if other_right
             %th.other.right.shrink= "..."
           %th.last.shrink
@@ -131,8 +131,8 @@
               %td.other.right= link_to "...", @other_right_link, :class => 'pjax'
             %td.last.links
               %ul.inline= menu_for :member, @abstract_model, object, true
-    - unless params[:all]
-      - total_count = @objects.total_count
+    - if @objects.respond_to?(:total_count)
+      - total_count = @objects.total_count.to_i
       = paginate(@objects, :theme => 'twitter-bootstrap', :remote => true)
       = link_to(t("admin.misc.show_all"), index_path(params.merge(:all => true)), :class => "show-all btn clearfix pjax") unless total_count > 100 || total_count <= @objects.to_a.size
       .clearfix.total-count= "#{total_count} #{@model_config.label_plural.downcase}"

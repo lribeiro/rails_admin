@@ -1,3 +1,5 @@
+@charset "UTF-8";
+
 <%
   theme = ENV['RAILS_ADMIN_THEME'] || :default
 %>
@@ -18,15 +20,19 @@
 
 /*** Reset ***/
 @import "bootstrap/reset";
-
 /***  Libraries  ***/
 
 @import "rails_admin/aristo/jquery-ui-1.8.7.custom";
 @import "rails_admin/jquery.ui.timepicker";
 @import "rails_admin/ra.calendar-additions";
 @import "rails_admin/ra.filtering-multiselect";
+@import "rails_admin/ra.widgets";
 @import "rails_admin/jquery.colorpicker";
 
+
+/*** Font-awesome ***/
+
+@import 'font-awesome';
 
 /***  Bootstrap Theming  ***/
 
@@ -34,10 +40,8 @@
 @import "bootstrap/grid";
 @import "bootstrap/layouts";
 @import "bootstrap/type";
-@import "bootstrap/code";
 @import "bootstrap/forms";
 @import "bootstrap/tables";
-@import "bootstrap/sprites";
 @import "bootstrap/dropdowns";
 @import "bootstrap/wells";
 @import "bootstrap/component-animations";
@@ -54,7 +58,7 @@
 @import "bootstrap/tooltip";
 @import "bootstrap/popovers";
 @import "bootstrap/thumbnails";
-@import "bootstrap/labels";
+@import "bootstrap/labels-badges";
 @import "bootstrap/progress-bars";
 @import "bootstrap/accordion";
 @import "bootstrap/carousel";
